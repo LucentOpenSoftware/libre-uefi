@@ -1,0 +1,105 @@
+# LibreUEFI CI — builds OVMF_CODE.fd + OVMF_VARS.fd on every push and
+# pull request. On a release tag (v*) the workflow also uploads the
+# built blobs as release assets so libre-vmm's packaging step can pull
+# pre-built firmware without setting up the EDK2 toolchain itself.
+
+name: build-ovmf
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  # Default minimal; the release job below scopes its own write
+  # permission. (Per the libre-vmm audit row #109 supply-chain
+  # hardening pattern.)
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # If/when edk2/ becomes a submodule, switch to recursive.
+          submodules: false
+
+      - name: Install apt build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+              build-essential \
+              nasm \
+              acpica-tools \
+              uuid-dev \
+              python3 \
+              python3-distutils-extra
+
+      - name: Build firmware (SECURE_BOOT_ENABLE=TRUE)
+        run: ./build.sh
+
+      - name: Stash TRUE artifacts
+        run: |
+          mkdir -p artifacts/secure-boot
+          cp output/LIBREUEFI_CODE.fd artifacts/secure-boot/
+          cp output/LIBREUEFI_VARS.fd artifacts/secure-boot/
+
+      # R6.A4 challenger conditional from libre-vmm audit row #170 —
+      # the SECURE_BOOT_ENABLE=FALSE build path must also stay green.
+      # Easiest way to flip it: re-run build with the flag removed.
+      - name: Build firmware (SECURE_BOOT_ENABLE=FALSE)
+        run: |
+          # Strip the -D SECURE_BOOT_ENABLE flag for this run.
+          sed 's/-D SECURE_BOOT_ENABLE//' build.sh > build-nosb.sh
+          chmod +x build-nosb.sh
+          rm -rf edk2/Build  # force a clean re-build, not incremental
+          ./build-nosb.sh
+
+      - name: Stash FALSE artifacts
+        run: |
+          mkdir -p artifacts/no-secure-boot
+          cp output/LIBREUEFI_CODE.fd artifacts/no-secure-boot/
+          cp output/LIBREUEFI_VARS.fd artifacts/no-secure-boot/
+
+      - name: Upload CI artifacts (every build)
+        uses: actions/upload-artifact@v4
+        with:
+          name: libreuefi-firmware
+          path: artifacts/
+          retention-days: 14
+
+  release:
+    # Only on tagged releases.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download CI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: libreuefi-firmware
+          path: artifacts/
+
+      - name: Package as tarballs
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          cd artifacts
+          tar -czf "libreuefi-${VERSION}-secure-boot.tar.gz" -C secure-boot .
+          tar -czf "libreuefi-${VERSION}-no-secure-boot.tar.gz" -C no-secure-boot .
+          # SHA-256 manifest for downstream verification.
+          sha256sum *.tar.gz > "libreuefi-${VERSION}-SHA256SUMS"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/libreuefi-*-secure-boot.tar.gz
+            artifacts/libreuefi-*-no-secure-boot.tar.gz
+            artifacts/libreuefi-*-SHA256SUMS
+          generate_release_notes: true

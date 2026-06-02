@@ -1,0 +1,39 @@
+# LibreUEFI .gitignore
+# ====================
+#
+# Excludes EDK2 build artifacts, BaseTools-built binaries, transient
+# config caches, and our own `output/` dir. Source files + our patches
+# + the `Conf/target.template`-derived `Conf/target.txt` are tracked.
+
+# ── Top-level built firmware blobs ───────────────────────────────────
+output/
+
+# ── EDK2 build outputs ───────────────────────────────────────────────
+edk2/Build/
+edk2/Conf/.cache/
+edk2/Conf/BuildEnv.sh
+edk2/Conf/tools_def.txt
+edk2/Conf/target.txt
+edk2/Conf/build_rule.txt
+
+# ── EDK2 BaseTools-built binaries (rebuilt from Source/ via `make`) ──
+edk2/BaseTools/Source/C/bin/
+edk2/BaseTools/Source/C/libs/
+edk2/BaseTools/Bin/Linux-*/
+edk2/BaseTools/BinWrappers/PosixLike/__pycache__/
+
+# ── Python bytecode (BaseTools/Source/Python/ + any other) ───────────
+edk2/**/__pycache__/
+edk2/**/*.pyc
+
+# ── Editor / IDE crud ────────────────────────────────────────────────
+*.swp
+*.swo
+.vscode/
+.idea/
+.DS_Store
+*~
+
+# ── Build logs from CI ───────────────────────────────────────────────
+build-*.log
+*.tlog
